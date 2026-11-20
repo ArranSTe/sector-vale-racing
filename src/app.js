@@ -1,7 +1,7 @@
 import {createClient} from '@supabase/supabase-js';
 import {canAttend,escapeHTML as e,date} from './domain.js';
 import './style.css';
-import {findWinterCup} from './winter-cup.js';
+import {advertisedRounds,findWinterCup} from './winter-cup.js';
 import {validateRegistration} from './registration.js';
 const root=document.querySelector('#app');
 const url=import.meta.env.VITE_SUPABASE_URL,key=import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
@@ -116,13 +116,14 @@ function render(){
 }
 function winterHero(detail){
  const image=detail?'loading="eager"':'fetchpriority="high"';
- return `<section class="cup-hero"><img class="cup-photo" src="/images/gt3-2.jpg" alt="" ${image}><div class="cup-hero-copy"><p class="eyebrow">Sector Vale Racing · iRacing</p><h1>Porsche<br>Winter Cup <em>2026</em></h1><p>Follow the Winter Cup calendar, championship entries and race results from Sector Vale Racing.</p><div class="cup-actions">${detail?'<a class="button primary" href="#championships?cup=porsche">Championships &amp; standings</a>':'<a class="button primary" href="#winter-cup">Explore the Winter Cup</a>'}<a class="button" href="${detail?'#calendar':'#series'}">${detail?'Full league calendar':'GT3 &amp; GT4 racing'}</a></div></div></section>`;
+ return `<section class="cup-hero"><img class="cup-photo" src="/images/gt3-2.jpg" alt="" ${image}><div class="cup-hero-copy"><p class="eyebrow">Sector Vale Racing · iRacing</p><h1>Porsche<br>Winter Cup <em>2026</em></h1><p>Four rounds of single-make iRacing in the Porsche 718 Cayman GT4 Clubsport MR.</p><div class="cup-actions">${detail?'<a class="button primary" href="#championships?cup=porsche">Championships &amp; standings</a>':'<a class="button primary" href="#winter-cup">Explore the Winter Cup</a>'}<a class="button" href="${detail?'#calendar':'#series'}">${detail?'Full league calendar':'GT3 &amp; GT4 racing'}</a></div></div></section>`;
 }
 function winterCupSchedule(){
  const cup=findWinterCup(championships);
  const rounds=cup?races.filter(r=>r.championship_id===cup.id):[];
  const canJoin=cup&&futureChampionships().some(c=>c.id===cup.id);
- return `<section class="page cup-section"><div class="sectionhead"><div><p class="eyebrow">Winter Cup · UK local time</p><h2>Race schedule</h2></div>${canJoin?'<button class="primary" data-click="joinchamp" data-cup="porsche">Enter the Winter Cup</button>':''}</div>${publicLoadFailed?'<p role="status">The schedule is temporarily unavailable.</p><button data-click="retry">Reload schedule</button>':rounds.length?raceCards(rounds,!!user):empty('Winter Cup rounds will appear here when the league publishes them.')}</section>`;
+ const advertised=advertisedRounds.map(({track,startsAt},index)=>`<article class="racecard"><div class="race-date">Round ${index+1}</div><div class="race-detail"><h3>${track}</h3><p>Qualifying · <time datetime="${startsAt}">${date(startsAt)} GMT</time></p></div></article>`).join('');
+ return `<section class="page cup-section"><div class="sectionhead"><div><p class="eyebrow">Winter Cup · UK local time</p><h2>Race schedule</h2></div>${canJoin?'<button class="primary" data-click="joinchamp" data-cup="porsche">Enter the Winter Cup</button>':''}</div>${rounds.length?raceCards(rounds,!!user):`<p class="muted">Advertised dates. Check the league calendar for confirmed sessions and attendance.</p>${advertised}`}${publicLoadFailed?'<p role="status">Live championship data is temporarily unavailable.</p><button data-click="retry">Reload live data</button>':''}</section>`;
 }
 function homeRacing(){
  const published=new Set(championships.filter(c=>c.published).map(c=>c.id));
