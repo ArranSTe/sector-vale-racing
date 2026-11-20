@@ -200,7 +200,7 @@ function modalHTML(){
  const name=recordKind==='championship'?`${record?.name} (${record?.season})`:record?.title;
  const count=races.filter(r=>r.championship_id===recordId).length;
  const impact=recordKind==='championship'?`This also removes its ${count} race session(s) and its championship entries.`:'';
- body=record?`<form data-form="delete-racing-record"><p>Permanently delete <strong>${e(name)}</strong>?</p>${impact?`<p>${impact}</p>`:''}<p>Attendance, check-ins, results, penalties and incident reports for the affected races will also be deleted.</p>${input('confirmation','Type DELETE to confirm','text','','required pattern="DELETE" autocomplete="off"')}<div class="delete-actions"><button type="button" data-click="closemodal">Cancel</button><button class="delete-control" type="submit">Delete ${recordKind}</button></div></form>`:empty('This record is no longer available.');
+ body=record?`<form data-form="delete-racing-record"><p>Permanently delete <strong>${e(name)}</strong>?</p>${impact?`<p>${impact}</p>`:''}<p>Attendance, check-ins, results, penalties and incident reports for the affected races will also be deleted.</p>${input('confirmation','Type DELETE to confirm','text','','required pattern="DELETE" autocomplete="off"')}<p class="delete-error" role="alert"></p><div class="delete-actions"><button type="button" data-click="closemodal">Cancel</button><button class="delete-control" type="submit">Delete ${recordKind}</button></div></form>`:empty('This record is no longer available.');
  }else if(modalState.kind==='results'){
  title='Race standings';const r=races.find(r=>r.id===modalState.id);body=`<h3>${e(r?.title)}</h3><p class="muted">${e(r?.track)} · ${r?date(r.starts_at):''}</p>${modalState.loading?'<p role="status">Loading standings…</p>':modalState.error?empty(modalState.error):modalState.rows?.length?table(['Pos','Driver','Points'],modalState.rows.map(s=>[s.disqualified?'DQ':s.position,e(s.display_name),s.points])):empty('Final results have not been published for this race yet.')}`;
  }else if(modalState.kind==='penalty'){
@@ -239,6 +239,7 @@ root.addEventListener('submit',async event=>{
  try{
  const kind=f.dataset.form;const data=Object.fromEntries(new FormData(f));
  if(kind==='delete-racing-record'){
+  f.querySelector('.delete-error').textContent='';
   const submittedModal=modalState;
   const {recordKind,recordId}=submittedModal;
   await query(db.rpc('delete_racing_record',{record_kind:recordKind,record_id:recordId,confirmation:data.confirmation}));
@@ -272,7 +273,11 @@ root.addEventListener('submit',async event=>{
  if(['checked_in','published','registration_open','enrollment_open'].some(k=>k in data))for(const k of ['checked_in','published','registration_open','enrollment_open'])if(k in data)data[k]=data[k]==='true';
  await action(kind,data);if(['penalty','join_championship'].includes(kind))closeModal();toast(kind==='penalty'?'Penalty given. Driver notified.':kind==='join_championship'?'Championship joined. Your HQ calendar is updated.':'Saved successfully.');await refresh();
  }
- }catch(err){toast(err.message)}finally{button.disabled=false;button.textContent=originalLabel;f.removeAttribute('aria-busy')}
+ }catch(err){
+  const deleteError=f.querySelector('.delete-error');
+  if(deleteError&&f.isConnected)deleteError.textContent=err.message;
+  else toast(err.message);
+ }finally{button.disabled=false;button.textContent=originalLabel;f.removeAttribute('aria-busy')}
 });
 root.addEventListener('change',async event=>{
  const target=event.target;

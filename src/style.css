@@ -94,3 +94,5 @@ footer>span{color:#fff;font-weight:600}
 .delete-control{border-color:#b74855;color:#ffb6bd;background:#351921}
 .delete-control:hover{background:#55232d;color:white}
 .delete-actions{display:flex;flex-wrap:wrap;gap:10px}
+.delete-error{color:#ffb6bd}
+.delete-error:empty{display:none}
