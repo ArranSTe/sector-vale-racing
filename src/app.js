@@ -1,16 +1,19 @@
 import {createClient} from '@supabase/supabase-js';
 import {canAttend,escapeHTML as e,date} from './domain.js';
 import './style.css';
+import {findWinterCup} from './winter-cup.js';
 import {validateRegistration} from './registration.js';
 const root=document.querySelector('#app');
 const url=import.meta.env.VITE_SUPABASE_URL,key=import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 const db=url&&key?createClient(url,key,{auth:{persistSession:true,autoRefreshToken:true,detectSessionInUrl:true}}):null;
-let user=null,profile=null,role={role:'driver',verified:false},settings={},championships=[],races=[],attendance=[],notes=[],penalties=[],reports=[],drivers=[],checkins=[],standings=[],entries=[],selectedRace='',amendSection='settings',showPast=false,modalState=null,champ='',factor=null,qr='',setupKey='',slide=0,loading=false;
+let user=null,profile=null,role={role:'driver',verified:false},settings={},championships=[],races=[],attendance=[],notes=[],penalties=[],reports=[],drivers=[],checkins=[],standings=[],entries=[],selectedRace='',amendSection='settings',showPast=false,modalState=null,champ='',factor=null,qr='',setupKey='';
 const query=async q=>{const {data,error}=await q;if(error)throw error;return data};
 const action=(action,payload={})=>query(db.rpc('league_action',{action,payload}));
-let refreshPromise=null,revealObserver=null,slideshowPaused=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+let refreshPromise=null,revealObserver=null,modalTrigger=null,standingsRequest=0;
+let publicLoadFailed=false;
 const edgeKey=import.meta.env.VITE_SUPABASE_EDGE_ANON_KEY;
 const route=()=>location.hash.slice(1).split('?')[0]||'home';
+const routeParams=()=>new URLSearchParams(location.hash.split('?')[1]);
 const go=path=>{location.hash=path};
 const toast=message=>{document.querySelector('#toast').textContent=message;clearTimeout(toast.timer);toast.timer=setTimeout(()=>document.querySelector('#toast').textContent='',6500)};
 const input=(name,label,type='text',value='',extra='')=>`<label>${label}<input name="${name}" type="${type}" value="${e(value)}" ${extra}></label>`;
@@ -26,8 +29,11 @@ const sessionSelect=()=>select('session_id','Race session',races.map(r=>[r.id,`$
 const driverSelect=()=>select('driver_id','Driver',drivers.filter(p=>p.status==='approved').map(p=>[p.id,`${p.forename} ${p.surname}`]));
 const table=(head,rows)=>`<div class="tablewrap"><table><thead><tr>${head.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map(x=>`<td>${x}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
 function shell(body){
+ const page=route();
+ const navLink=(path,label)=>`<a href="#${path}"${page===path?' aria-current="page"':''}>${label}</a>`;
+ const menuWasOpen=root.querySelector('#menu-toggle')?.getAttribute('aria-expanded')==='true';
  const unread=notes.filter(n=>!n.read_at).length;
- root.innerHTML=`<header><a class="brand" href="#home"><img class="brand-logo" src="/branding/SVR-primary.png" alt="Sector Vale Racing — home" width="220" height="89"></a><nav aria-label="Main navigation"><a href="#series">GT3 & GT4</a><a href="#championships">Championships</a><a href="#calendar">Calendar</a>${user?`<a href="#dashboard">Dashboard</a><a class="icon" href="#notifications" aria-label="Notifications, ${unread} unread"><svg width="22" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>${unread?`<b>${unread}</b>`:''}</a><a class="icon" href="#profile" aria-label="Your profile">◉</a>${role.role!=='driver'?'<a href="#admin">Race control</a>':''}<button data-click="logout" class="quiet">Sign out</button>`:`<a href="#login">Sign in</a><a class="button ${settings.registration_open?'primary':''}" href="#register">${settings.registration_open?'Pre-register ↗':'Pre-registration closed'}</a>`}</nav></header><main>${body}</main><footer><span>${e(brandName)} · Race with respect.</span><div><a href="#privacy">Privacy</a><a href="#regulations">Racing regulations</a><a href="#credits">Image credits</a><span>All times: UK</span></div></footer>${modalHTML()}`;
+ root.innerHTML=`<a class="skip-link" href="#main-content" data-click="skip">Skip to content</a><header><a class="brand" href="#home"><img class="brand-logo" src="/branding/SVR-primary.png" alt="Sector Vale Racing — home" width="220" height="89"></a><button class="menu-toggle" id="menu-toggle" type="button" data-click="menu" aria-controls="main-nav" aria-expanded="${menuWasOpen}">Menu</button><nav id="main-nav" aria-label="Main navigation">${navLink('winter-cup','Winter Cup')}${navLink('series','GT3 &amp; GT4')}${navLink('championships','Championships')}${navLink('calendar','Calendar')}${user?`<a href="#dashboard">Dashboard</a><a class="icon" href="#notifications" aria-label="Notifications, ${unread} unread"><svg width="22" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>${unread?`<b>${unread}</b>`:''}</a><a class="icon" href="#profile" aria-label="Your profile">◉</a>${role.role!=='driver'?'<a href="#admin">Race control</a>':''}<button data-click="logout" class="quiet">Sign out</button>`:`<a href="#login">Sign in</a><a class="button ${settings.registration_open?'primary':''}" href="#register">${settings.registration_open?'Pre-register ↗':'Pre-registration closed'}</a>`}</nav></header><main id="main-content" tabindex="-1">${body}</main><footer><span>${e(brandName)} · Race with respect.</span><div><a href="#privacy">Privacy</a><a href="#regulations">Racing regulations</a><a href="#credits">Image credits</a><span>All times: UK</span></div></footer>${modalHTML()}`;
  if(modalState)document.querySelector("#league-modal").showModal();
  revealObserver?.disconnect();
  if(!window.matchMedia('(prefers-reduced-motion: reduce)').matches&&'IntersectionObserver' in window){revealObserver=new IntersectionObserver(entries=>{for(const entry of entries)if(entry.isIntersecting){entry.target.classList.add('is-visible');revealObserver.unobserve(entry.target)}},{threshold:0.06});root.querySelectorAll('.racecard,.featuregrid article,.panel,.notification').forEach(el=>{el.classList.add('reveal-ready');revealObserver.observe(el)})}
@@ -41,7 +47,7 @@ async function loadLeague(){
  [settings,championships,races]=await Promise.all([
  query(db.from('league_settings').select('*').single()),query(db.from('championships').select('*').order('season',{ascending:false})),query(db.from('race_sessions').select('*').order('starts_at'))
  ]);
- if(!champ||!championships.some(c=>c.id===champ))champ=championships[0]?.id||'';
+ if(!champ||!championships.some(c=>c.id===champ))champ=championships.find(c=>c.published)?.id||championships[0]?.id||'';
  profile=null;role={role:'driver',verified:false};attendance=[];notes=[];penalties=[];reports=[];drivers=[];checkins=[];entries=[];
  if(user){
  [profile,role,attendance,notes,penalties,reports]=await Promise.all([
@@ -50,9 +56,22 @@ async function loadLeague(){
  entries=await query(db.from('championship_entries').select('*'));
  if(role.verified)[drivers,checkins]=await Promise.all([query(db.from('profiles').select('*').order('surname')),query(db.from('checkins').select('*'))]);
  }
- standings=champ?await query(db.rpc('championship_standings',{championship:champ})):[];
+ publicLoadFailed=false;
+ try{await loadStandings(champ)}catch{toast('Standings are temporarily unavailable.')}
  render();return true;
- }catch(err){shell(`<section class="page narrow"><h1>We couldn’t load the league</h1><p>${e(err.message)}</p><button data-click="retry">Try again</button></section>`);return false}
+ }catch(err){
+ publicLoadFailed=true;
+ if(['home','winter-cup','series'].includes(route()))render();
+ else shell(`<section class="page narrow"><h1>We couldn’t load the league</h1><p>${e(err.message)}</p><button data-click="retry">Try again</button></section>`);
+ return false
+ }
+}
+async function loadStandings(id){
+ const request=++standingsRequest;
+ const rows=id?await query(db.rpc('championship_standings',{championship:id})):[];
+ if(request!==standingsRequest)return false;
+ standings=rows;
+ return true;
 }
 function raceCards(list,withAttendance=false){return list.length?list.map(r=>{
  const attending=attendance.find(a=>a.session_id===r.id&&a.driver_id===user?.id)?.attending||false;
@@ -65,9 +84,15 @@ function championshipPicker(){return select('championship','Championship',champi
 function standingsTable(){return standings.length?table(['Pos','Driver','Wins','Points'],standings.map(s=>[`${s.position}`,e(s.display_name),s.wins,`<strong>${s.points}</strong>`])):empty('Standings will appear when the first results are published.');}
 function render(){
  const page=route();
+ if(publicLoadFailed&&!['home','winter-cup','series'].includes(page)){
+  shell('<section class="page narrow"><h1>League connection unavailable</h1><button data-click="retry">Try again</button></section>');
+  return;
+ }
  if(['dashboard','profile','notifications','incident','admin','steward','amend','verify','password'].includes(page)&&!user){go('login');return}
  let body='';
- if(page==='home'||page==='series')body=`<section class="hero svr-hero"><div class="slides" aria-label="Racing action slideshow">${['/images/gt3-0.jpg','/images/gt3-1.jpg','/images/gt3-2.jpg'].map((p,i)=>`<div class="slide ${i===slide?'active':''}" style="background-image:url('${p}')"></div>`).join('')}</div><div class="herocopy"><p class="eyebrow">SECTOR VALE RACING / iRACING LEAGUE</p><h1>Find your<br>next <em>limit.</em></h1><p>Close racing. Shared ambition. A community built around respect. Take the first step towards your next season with Sector Vale Racing.</p><div class="hero-actions"><a class="button primary large" href="${user?'#dashboard':'#register'}">${user?'Driver dashboard':settings.registration_open?'Pre-register your interest':'Pre-registration closed'} ↗</a><a class="button glass large" href="#series">Explore GT3 & GT4 ↓</a></div><p class="entry-note">Register your interest. Race entry is confirmed separately.</p></div><div class="slidecontrols"><span>GT3 + GT4 <b>/</b> BUILT FOR THE RACER</span><button data-click="prevslide" aria-label="Previous racing image">←</button><button data-click="nextslide" aria-label="Next racing image">→</button></div><span class="hero-side" aria-hidden="true">SVR / THE NEXT CHAPTER</span></section><div class="brand-strip"><span>PRECISION.</span><span>RESPECT.</span><span>COMPETITION.</span><span class="strip-end">SECTOR VALE RACING</span></div><section class="page svr-home"><div class="sectionhead"><div><p class="eyebrow">TWO CLASSES. ONE COMMUNITY.</p><h2>Choose your next challenge.</h2></div><span class="section-tag">GT3 / GT4</span></div><p class="section-intro">Tell us where you want to race. Choose GT3, GT4 or both when you pre-register — your preference helps shape the league.</p><div class="series-grid" id="series-list"><article class="series-card"><div class="series-number" aria-hidden="true">03</div><p class="eyebrow">THE GT3 EXPERIENCE</p><h3>Push the pace.</h3><p>For drivers drawn to GT3 machinery and close competition. Bring your focus, find your rhythm and make every lap count.</p><a href="#register?category=GT3">${settings.registration_open?'Pre-register for GT3':'View pre-registration'} <span>↗</span></a></article><article class="series-card gt4"><div class="series-number" aria-hidden="true">04</div><p class="eyebrow">THE GT4 EXPERIENCE</p><h3>Master the race.</h3><p>For drivers who enjoy GT4 racing and building consistency. Develop your racecraft and share the track with a respectful community.</p><a href="#register?category=GT4">${settings.registration_open?'Pre-register for GT4':'View pre-registration'} <span>↗</span></a></article></div><section class="registration-explainer" aria-labelledby="prereg-title"><div><p class="eyebrow">YOUR FIRST STEP</p><h2 id="prereg-title">Interest today.<br>Racing comes next.</h2></div><div><p>Pre-registration creates your driver profile and records your GT3 / GT4 preference. The league team reviews applications before drivers can attend races.</p><p class="muted">It does not reserve a grid place or confirm race entry. Championship membership and session attendance are handled separately.</p><a class="text-link" href="${user?'#dashboard':'#register'}">${user?'Open your driver dashboard':'Create your driver profile'} ↗</a></div></section><div class="sectionhead"><div><p class="eyebrow">ON THE HORIZON</p><h2>The next lights out.</h2></div><a href="#calendar">Full calendar ↗</a></div>${raceCards(races.filter(r=>new Date(r.starts_at)>new Date()&&r.status!=='cancelled').slice(0,3))}<div class="featuregrid"><article><span>01 / COMPETE</span><h3>Make every lap count.</h3><p>Follow championship standings and see your season take shape.</p></article><article><span>02 / CONNECT</span><h3>Find your people.</h3><p>A shared passion for racing, from the first practice lap to the chequered flag.</p></article><article><span>03 / RESPECT</span><h3>Race the right way.</h3><p>Published regulations, incident reports and steward decisions support fair competition.</p></article></div></section>`;
+ if(page==='home')body=winterHero(false)+homeRacing();
+ else if(page==='winter-cup')body=winterHero(true)+winterCupSchedule();
+ else if(page==='series')body=seriesPage();
  else if(page==='register')body=`<section class="page narrow"><p class="eyebrow">YOUR NEXT CHAPTER</p><h1>Your next chapter starts here.</h1><p>Pre-register your interest in GT3, GT4 or both. Create a driver profile for league review.</p><p class="notice">Pre-registration does not reserve a grid place or confirm race entry. Championship membership and session attendance are separate steps.</p>${settings.registration_open?form('register',`<div class="twocol">${input('forename','Forename','text','','required maxlength="80" autocomplete="given-name"')}${input('surname','Surname','text','','required maxlength="80" autocomplete="family-name"')}</div>${input('email','Email','email','','required autocomplete="email"')}${input('password','Password','password','','required minlength="12" autocomplete="new-password"')}${select('category','Racing category preference',categories,['GT3','GT4','Both'].includes(new URLSearchParams(location.hash.split('?')[1]).get('category'))?new URLSearchParams(location.hash.split('?')[1]).get('category'):'GT3')}${select('experience','iRating band',levels)}<label class="check"><input name="privacy_acknowledged" type="checkbox" required><span>I have read the <a href="#privacy" target="_blank" rel="noopener">privacy notice</a> and understand how my information is used to manage the league.</span></label><label class="check"><input name="regulations_accepted" type="checkbox" required><span>I accept the <a href="#regulations" target="_blank" rel="noopener">racing regulations</a>.</span></label><p class="muted">Your public race results use your forename and surname initial. Your email is private. No email-confirmation link is needed; the organiser reviews applications before drivers can attend races.</p>`,'Pre-register →'):empty('Registration is not open yet. Please check back once the league publishes its privacy notice and racing regulations.')}<p>Already registered? <a href="#login">Sign in</a></p></section>`;
  else if(page==='setup')body=`<section class="page narrow"><p class="eyebrow">LEAGUE OWNER</p><h1>Set up your account.</h1><p>This route is reserved for the owner email assigned during deployment. Your email must be verified before any staff role is assigned, and an authenticator code is required to enter race control.</p>${form('owner_setup',input('forename','Forename','text','','required maxlength="80" autocomplete="given-name"')+input('surname','Surname','text','','required maxlength="80" autocomplete="family-name"')+input('email','Owner email','email','','required autocomplete="email"')+input('password','Password','password','','required minlength="12" autocomplete="new-password"')+select('category','Racing category preference',categories,['GT3','GT4','Both'].includes(new URLSearchParams(location.hash.split('?')[1]).get('category'))?new URLSearchParams(location.hash.split('?')[1]).get('category'):'GT3')+select('experience','iRating band',levels),'Create owner account')}<p class="muted">Your account details are used for league administration and processed by Supabase. Public driver registration remains closed until the owner publishes the privacy notice and racing regulations. This setup does not record acceptance of unpublished racing regulations.</p></section>`;
  else if(page==='login')body=`<section class="page narrow"><p class="eyebrow">WELCOME BACK</p><h1>Back on track.</h1>${form('login',input('email','Email','email','','required autocomplete="email"')+input('password','Password','password','','required autocomplete="current-password"'),'Sign in →')}<a href="#reset">Forgot your password?</a></section>`;
@@ -88,7 +113,24 @@ function render(){
  else if(page==='privacy'||page==='regulations')body=`<section class="page narrow"><h1>${page==='privacy'?'Privacy notice':'Racing regulations'}</h1><p class="muted">Version ${settings.policy_version}</p><div class="prose">${e(page==='privacy'?settings.privacy_text:settings.regulations)||'The league has not published this document yet.'}</div>${page==='privacy'?`<p>Data controller: ${e(settings.controller_name)}<br>Contact: ${e(settings.privacy_email)}</p>`:''}</section>`;
  else body=`<section class="page narrow"><h1>Page not found</h1><a href="#home">Return home</a></section>`;
  shell(body);
- if(page==='series')document.querySelector('#series-list')?.scrollIntoView();
+}
+function winterHero(detail){
+ const image=detail?'loading="eager"':'fetchpriority="high"';
+ return `<section class="cup-hero"><img class="cup-photo" src="/images/gt3-2.jpg" alt="" ${image}><div class="cup-hero-copy"><p class="eyebrow">Sector Vale Racing · iRacing</p><h1>Porsche<br>Winter Cup <em>2026</em></h1><p>Follow the Winter Cup calendar, championship entries and race results from Sector Vale Racing.</p><div class="cup-actions">${detail?'<a class="button primary" href="#championships?cup=porsche">Championships &amp; standings</a>':'<a class="button primary" href="#winter-cup">Explore the Winter Cup</a>'}<a class="button" href="${detail?'#calendar':'#series'}">${detail?'Full league calendar':'GT3 &amp; GT4 racing'}</a></div></div></section>`;
+}
+function winterCupSchedule(){
+ const cup=findWinterCup(championships);
+ const rounds=cup?races.filter(r=>r.championship_id===cup.id):[];
+ const canJoin=cup&&futureChampionships().some(c=>c.id===cup.id);
+ return `<section class="page cup-section"><div class="sectionhead"><div><p class="eyebrow">Winter Cup · UK local time</p><h2>Race schedule</h2></div>${canJoin?'<button class="primary" data-click="joinchamp" data-cup="porsche">Enter the Winter Cup</button>':''}</div>${publicLoadFailed?'<p role="status">The schedule is temporarily unavailable.</p><button data-click="retry">Reload schedule</button>':rounds.length?raceCards(rounds,!!user):empty('Winter Cup rounds will appear here when the league publishes them.')}</section>`;
+}
+function homeRacing(){
+ const published=new Set(championships.filter(c=>c.published).map(c=>c.id));
+ const upcoming=races.filter(r=>published.has(r.championship_id)&&new Date(r.starts_at)>new Date()&&r.status==='scheduled').slice(0,3);
+ return `<section class="page cup-section"><div class="sectionhead"><h2>Upcoming races</h2><a href="#calendar">Full calendar</a></div>${publicLoadFailed?'<p role="status">The calendar is temporarily unavailable.</p><button data-click="retry">Reload calendar</button>':raceCards(upcoming)}<div class="league-entry"><div><h2>Race with Sector Vale</h2><p>Choose GT3, GT4 or both when you create your driver profile. The league reviews new drivers before they can enter a championship.</p></div><a class="button" href="${user?'#dashboard':'#register'}">${user?'Driver dashboard':settings.registration_open?'Pre-register':'Registration information'}</a></div></section>`;
+}
+function seriesPage(){
+ return `<section class="page"><p class="eyebrow">Sector Vale Racing</p><h1>GT3 &amp; GT4 racing</h1><p>Choose a class when you pre-register your driver profile.</p><div class="series-grid">${['GT3','GT4'].map(category=>`<article class="series-card ${category.toLowerCase()}"><h2>${category}</h2><a href="${user?'#championships':'#register?category='+category}">${user?'View championships':settings.registration_open?'Pre-register for '+category:'Registration information'}</a></article>`).join('')}</div></section>`;
 }
 function driverName(id){const d=drivers.find(d=>d.id===id);return d?d.forename+' '+d.surname:'Driver'}
 function joinedRaces(){const ids=new Set(entries.filter(x=>x.driver_id===user?.id).map(x=>x.championship_id));return races.filter(r=>ids.has(r.championship_id))}
@@ -146,7 +188,7 @@ function modalHTML(){
  if(!modalState)return '';
  let title='',body='';
  if(modalState.kind==='join'){
- title='Join a championship';const available=futureChampionships();body=!user?`<p>Sign in or create a driver account to join a championship.</p><a class="button primary" href="#login">Sign in</a>`:available.length?form('join_championship',select('championship_id','Choose a future championship',available.map(c=>[c.id,`${c.name} · ${c.season}`]))+'<p class="muted">Your entry adds this championship to Driver HQ. Confirm attendance separately for each race.</p>','Join championship →'):empty('No future championships are accepting new entries. You may already have joined the available championships.');
+ title='Join a championship';const cup=modalState.cup?findWinterCup(championships):null;const available=futureChampionships().filter(c=>!modalState.cup||c.id===cup?.id);body=!user?`<p>Sign in or create a driver account to join a championship.</p><a class="button primary" href="#login">Sign in</a>`:available.length?form('join_championship',select('championship_id','Choose a future championship',available.map(c=>[c.id,`${c.name} · ${c.season}`]))+'<p class="muted">Your entry adds this championship to Driver HQ. Confirm attendance separately for each race.</p>','Join championship →'):empty('No future championships are accepting new entries. You may already have joined the available championships.');
  }else if(modalState.kind==='results'){
  title='Race standings';const r=races.find(r=>r.id===modalState.id);body=`<h3>${e(r?.title)}</h3><p class="muted">${e(r?.track)} · ${r?date(r.starts_at):''}</p>${modalState.loading?'<p role="status">Loading standings…</p>':modalState.error?empty(modalState.error):modalState.rows?.length?table(['Pos','Driver','Points'],modalState.rows.map(s=>[s.disqualified?'DQ':s.position,e(s.display_name),s.points])):empty('Final results have not been published for this race yet.')}`;
  }else if(modalState.kind==='penalty'){
@@ -154,7 +196,31 @@ function modalHTML(){
  }
  return `<dialog id="league-modal" aria-labelledby="modal-title"><div class="modal-heading"><h2 id="modal-title">${e(title)}</h2><button class="modal-close quiet" data-click="closemodal" aria-label="Close popup">✕</button></div>${body}</dialog>`;
 }
-function closeModal(){modalState=null;document.querySelector('#league-modal')?.close();document.querySelector('#league-modal')?.remove()}
+function closeModal({restoreFocus=true}={}){
+ if(!modalState)return;
+ modalState=null;
+ const dialog=root.querySelector('#league-modal');
+ dialog?.close();
+ dialog?.remove();
+ if(restoreFocus){
+  const trigger=[...root.querySelectorAll('[data-click]')].find(el=>el.dataset.click===modalTrigger?.click&&el.dataset.id===modalTrigger?.id);
+  (trigger||root.querySelector('main'))?.focus();
+ }
+ modalTrigger=null;
+}
+function openModal(target,kind,options={}){
+ modalTrigger={click:target.dataset.click,id:target.dataset.id};
+ modalState={kind,...options};
+ render();
+}
+async function applyRouteSelection(){
+ if(route()!=='championships'||routeParams().get('cup')!=='porsche')return;
+ const cup=findWinterCup(championships);
+ if(!cup||cup.id===champ)return;
+ champ=cup.id;
+ standings=[];
+ try{await loadStandings(champ)}catch{toast('Standings are temporarily unavailable.')}
+}
 
 root.addEventListener('submit',async event=>{
  const f=event.target;if(!f.dataset.form)return;event.preventDefault();const button=f.querySelector('button[type="submit"]');const originalLabel=button.textContent;button.disabled=true;button.textContent='Please wait…';f.setAttribute('aria-busy','true');
@@ -191,18 +257,28 @@ root.addEventListener('submit',async event=>{
 root.addEventListener('change',async event=>{
  const target=event.target;
  try{
- if(target.name==='championship'){champ=target.value;standings=await query(db.rpc('championship_standings',{championship:champ}));render()}
+ if(target.name==='championship'){
+  champ=target.value;
+  if(routeParams().has('cup'))history.replaceState(null,'','#'+route());
+  standings=[];
+  render();
+  try{if(await loadStandings(champ))render()}catch{toast('Standings are temporarily unavailable.')}
+ }
  if(target.dataset.attend){target.disabled=true;await action('attend',{session_id:target.dataset.attend,attending:target.checked});await refresh();toast('Attendance updated.')}
  if(target.id==='reason-preset')target.closest('form').elements.reason.value=target.value;
  }catch(err){toast(err.message);await refresh()}
 });
 root.addEventListener('click',async event=>{
+ const navLink=event.target.closest('#main-nav a');
+ if(navLink)root.querySelector('#menu-toggle')?.setAttribute('aria-expanded','false');
  const target=event.target.closest('[data-click],[data-read]');if(!target)return;
  try{
  if(target.dataset.read){await action('read',{id:target.dataset.read});await refresh()}
  if(target.dataset.click==='closemodal'){closeModal();return}
- if(target.dataset.click==='joinchamp'){modalState={kind:'join'};render();return}
- if(target.dataset.click==='raceresults'){modalState={kind:'results',id:target.dataset.id,loading:true};render();try{const rows=await query(db.rpc('race_standings',{session:target.dataset.id}));if(modalState?.kind==='results'&&modalState.id===target.dataset.id){modalState={...modalState,rows,loading:false};render()}}catch(err){if(modalState?.kind==='results'){modalState={...modalState,error:err.message,loading:false};render()}}return}
+ if(target.dataset.click==='skip'){event.preventDefault();root.querySelector('main').focus();return}
+ if(target.dataset.click==='menu'){target.setAttribute('aria-expanded',String(target.getAttribute('aria-expanded')!=='true'));return}
+ if(target.dataset.click==='joinchamp'){openModal(target,'join',{cup:target.dataset.cup});return}
+ if(target.dataset.click==='raceresults'){openModal(target,'results',{id:target.dataset.id,loading:true});try{const rows=await query(db.rpc('race_standings',{session:target.dataset.id}));if(modalState?.kind==='results'&&modalState.id===target.dataset.id){modalState={...modalState,rows,loading:false};render()}}catch(err){if(modalState?.kind==='results'){modalState={...modalState,error:err.message,loading:false};render()}}return}
  if(target.dataset.click==='past'){showPast=!showPast;render();return}
  if(target.dataset.click==='amendsection'){amendSection=target.dataset.id;render();return}
  if(target.dataset.click==='raceslist'){selectedRace='';render();return}
@@ -211,7 +287,7 @@ root.addEventListener('click',async event=>{
  if(target.dataset.click==='markdriver'){target.disabled=true;await action('checkin',{session_id:selectedRace,driver_id:target.dataset.id,checked_in:target.dataset.present==='true'});await refresh();return}
  if(target.dataset.click==='startrace'){target.disabled=true;await action('session_state',{session_id:selectedRace,status:'live'});await refresh();toast('Race started. Live penalties are ready.');return}
  if(target.dataset.click==='finishrace'){target.disabled=true;await action('session_state',{session_id:selectedRace,status:'finished'});await refresh();toast('Race finished. Publish results in Amend.');return}
- if(target.dataset.click==='givepenalty'){modalState={kind:'penalty',driverId:target.dataset.id,type:target.dataset.type,seconds:Number(target.dataset.seconds)};render();return}
+ if(target.dataset.click==='givepenalty'){openModal(target,'penalty',{driverId:target.dataset.id,type:target.dataset.type,seconds:Number(target.dataset.seconds)});return}
  if(target.dataset.click==='penaltyreason'){const f=target.closest('form');f.elements.reason.value=target.dataset.reason;f.querySelectorAll('[data-click="penaltyreason"]').forEach(b=>b.classList.toggle('selected',b===target));return}
  if(target.dataset.click==='retry')await refresh();
  if(target.dataset.click==='togglesignup'){target.disabled=true;const enabled=target.dataset.enabled==='true';await action('signup_toggle',{enabled});await refresh();toast(enabled?'Signups enabled. New drivers can register.':'Signups disabled. Existing accounts can still sign in.')}
@@ -226,11 +302,19 @@ root.addEventListener('click',async event=>{
  }catch(err){toast(err.message);target.disabled=false}
 });
 root.addEventListener('cancel',event=>{if(event.target.id==='league-modal'){event.preventDefault();closeModal()}},true);
-window.addEventListener('hashchange',()=>{closeModal();render();if(route()!=='series')window.scrollTo(0,0)});
+window.addEventListener('hashchange',async ()=>{
+ closeModal({restoreFocus:false});
+ root.querySelector('#menu-toggle')?.setAttribute('aria-expanded','false');
+ const selection=applyRouteSelection();
+ render();
+ window.scrollTo(0,0);
+ root.querySelector('main')?.focus({preventScroll:true});
+ await selection;
+ if(route()==='championships'&&routeParams().has('cup'))render();
+});
 if(db)db.auth.onAuthStateChange((event)=>{if(event==='SIGNED_OUT'){factor=null;qr='';setupKey=''}if(event==='PASSWORD_RECOVERY')go('password');if(['SIGNED_OUT','TOKEN_REFRESHED','MFA_CHALLENGE_VERIFIED'].includes(event))setTimeout(refresh,0)});
 setInterval(()=>{if(document.visibilityState==='visible'&&user&&!root.querySelector('form'))refresh()},30000);
-function paintSlides(){root.querySelectorAll('.slide').forEach((el,index)=>el.classList.toggle('active',index===slide))}
-setInterval(()=>{if(route()==='home'&&!slideshowPaused&&document.visibilityState==='visible'){slide=(slide+1)%3;paintSlides()}},7000);
 setInterval(()=>{document.querySelectorAll('[data-attend]').forEach(el=>{const r=races.find(r=>r.id===el.dataset.attend);if(r&&(!canAttend(r.starts_at,Date.now(),r.status)||r.status!=='scheduled'))el.disabled=true})},1000);
 shell(`<section class="page narrow loading-screen" aria-busy="true"><div class="loading-spinner" aria-hidden="true"></div><h1>Getting the grid ready.</h1><p>Loading your league…</p></section>`);
 await refresh();
+if(routeParams().has('cup')){await applyRouteSelection();render()}
