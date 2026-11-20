@@ -89,3 +89,8 @@ footer>span{color:#fff;font-weight:600}
  .cup-hero::after{background:linear-gradient(0deg,#101014 6%,#101014e8 31%,#10101439 80%),linear-gradient(90deg,#10101477,transparent)}
  .cup-hero{min-height:535px}
 }
+
+/* Confirmed record removal in Race Control */
+.delete-control{border-color:#b74855;color:#ffb6bd;background:#351921}
+.delete-control:hover{background:#55232d;color:white}
+.delete-actions{display:flex;flex-wrap:wrap;gap:10px}
